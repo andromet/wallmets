@@ -28,7 +28,7 @@ export default function Home() {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // State untuk Filter Bulan & Tahun (Default: Bulan Ini)
+  // State untuk Filter Bulan & Tahun
   const today = new Date();
   const [selectedMonth, setSelectedMonth] = useState(today.getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(today.getFullYear());
@@ -39,32 +39,32 @@ export default function Home() {
   const [category, setCategory] = useState<'Income' | 'Food' | 'Shopping' | 'Other' | 'Savings'>('Food');
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
+  
+  // State untuk melacak transaksi mana yang sedang di-edit (jika ada)
+  const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null);
 
   // State Form Goal
   const [goalCategory, setGoalCategory] = useState<string>('Food');
   const [goalAmount, setGoalAmount] = useState('');
 
-  // Fungsi untuk mengambil data (dibungkus useCallback agar bisa dipanggil di dalam useEffect dengan aman)
+  // Fungsi Fetch Data
   const fetchData = useCallback(async () => {
     setLoading(true);
     
-    // Menentukan tanggal 1 dan tanggal terakhir dari bulan yang dipilih
     const strMonth = String(selectedMonth).padStart(2, '0');
     const startDate = `${selectedYear}-${strMonth}-01`;
     const lastDay = new Date(selectedYear, selectedMonth, 0).getDate();
     const endDate = `${selectedYear}-${strMonth}-${lastDay}`;
 
-    // Ambil Transaksi yang tanggalnya berada di bulan & tahun terpilih
     const { data: trxData } = await supabase
       .from('transactions')
       .select('*')
-      .gte('date', startDate) // Lebih besar dari atau sama dengan tanggal awal
-      .lte('date', endDate)   // Lebih kecil dari atau sama dengan tanggal akhir
+      .gte('date', startDate)
+      .lte('date', endDate)
       .order('date', { ascending: false });
       
     if (trxData) setTransactions(trxData as Transaction[]);
 
-    // Ambil Target/Goal untuk bulan & tahun terpilih
     const { data: goalData } = await supabase
       .from('monthly_goals')
       .select('*')
@@ -76,17 +76,16 @@ export default function Home() {
     setLoading(false);
   }, [selectedMonth, selectedYear]);
 
-  // Efek ini akan berjalan setiap kali Bulan atau Tahun pada filter diubah
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  // Handle Submit Transaksi
+  // Handle Submit Transaksi (Bisa Create atau Update)
   async function handleTransactionSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!amount || Number(amount) <= 0) return alert('Masukkan jumlah nominal yang valid');
 
-    const newTransaction = {
+    const transactionData = {
       date,
       type,
       category: type === 'Income' ? 'Income' : category,
@@ -94,13 +93,50 @@ export default function Home() {
       description,
     };
 
-    const { error } = await supabase.from('transactions').insert([newTransaction]);
-    if (error) alert('Gagal menambah transaksi: ' + error.message);
-    else {
-      setAmount('');
-      setDescription('');
-      fetchData();
+    if (editingTransactionId) {
+      // Logika Update (Edit)
+      const { error } = await supabase
+        .from('transactions')
+        .update(transactionData)
+        .eq('id', editingTransactionId);
+        
+      if (error) alert('Gagal update transaksi: ' + error.message);
+      else {
+        resetTransactionForm();
+        fetchData();
+      }
+    } else {
+      // Logika Create (Tambah Baru)
+      const { error } = await supabase.from('transactions').insert([transactionData]);
+      if (error) alert('Gagal menambah transaksi: ' + error.message);
+      else {
+        resetTransactionForm();
+        fetchData();
+      }
     }
+  }
+
+  // Fungsi untuk menyiapkan form dalam mode edit
+  function handleEditClick(transaction: Transaction) {
+    setEditingTransactionId(transaction.id);
+    setDate(transaction.date);
+    setType(transaction.type);
+    setCategory(transaction.category);
+    setAmount(String(transaction.amount));
+    setDescription(transaction.description || '');
+    
+    // Scroll layar ke atas agar form edit terlihat
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // Fungsi untuk mereset form ke kondisi awal (mode tambah baru)
+  function resetTransactionForm() {
+    setEditingTransactionId(null);
+    setDate(today.toISOString().split('T')[0]);
+    setType('Expense');
+    setCategory('Food');
+    setAmount('');
+    setDescription('');
   }
 
   // Handle Delete Transaksi
@@ -111,7 +147,7 @@ export default function Home() {
     else fetchData();
   }
 
-  // Handle Submit Goal (Untuk Bulan Terpilih)
+  // Handle Submit Goal
   async function handleGoalSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!goalAmount || Number(goalAmount) <= 0) return alert('Masukkan nominal target yang valid');
@@ -126,8 +162,8 @@ export default function Home() {
       if (error) alert('Gagal update target: ' + error.message);
     } else {
       const { error } = await supabase.from('monthly_goals').insert([{
-        month: selectedMonth, // Menggunakan bulan dari filter
-        year: selectedYear,   // Menggunakan tahun dari filter
+        month: selectedMonth,
+        year: selectedYear,
         category: goalCategory,
         goal_amount: Number(goalAmount),
       }]);
@@ -152,7 +188,6 @@ export default function Home() {
   const totalSavings = getCategoryActual('Savings');
   const netTotal = totalIncome - totalExpenses - totalSavings;
 
-  // Render Nama Bulan untuk Dropdown
   const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
   const yearOptions = [2024, 2025, 2026, 2027];
 
@@ -248,9 +283,9 @@ export default function Home() {
           </form>
         </section>
 
-        {/* Form Tambah Transaksi */}
-        <section style={{ padding: '1rem', border: '1px solid #ddd', borderRadius: '8px' }}>
-          <h3>+ Tambah Transaksi</h3>
+        {/* Form Transaksi (Bisa Tambah Baru atau Edit) */}
+        <section style={{ padding: '1rem', border: editingTransactionId ? '2px solid #0070f3' : '1px solid #ddd', borderRadius: '8px', background: editingTransactionId ? '#f0f8ff' : 'white' }}>
+          <h3>{editingTransactionId ? '✏️ Edit Transaksi' : '+ Tambah Transaksi'}</h3>
           <form onSubmit={handleTransactionSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <label>Tanggal:<br/><input type="date" value={date} onChange={(e) => setDate(e.target.value)} required style={{ width: '100%', padding: '0.5rem' }} /></label>
             <label>Tipe:<br/>
@@ -277,7 +312,17 @@ export default function Home() {
             )}
             <label>Nominal (Rp):<br/><input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required style={{ width: '100%', padding: '0.5rem' }} /></label>
             <label>Deskripsi:<br/><input type="text" value={description} onChange={(e) => setDescription(e.target.value)} style={{ width: '100%', padding: '0.5rem' }} /></label>
-            <button type="submit" style={{ padding: '0.7rem', backgroundColor: '#0070f3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Simpan Transaksi</button>
+            
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <button type="submit" style={{ flex: 1, padding: '0.7rem', backgroundColor: '#0070f3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+                {editingTransactionId ? 'Update Transaksi' : 'Simpan Transaksi'}
+              </button>
+              {editingTransactionId && (
+                <button type="button" onClick={resetTransactionForm} style={{ padding: '0.7rem', backgroundColor: '#e2e8f0', color: '#333', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+                  Batal
+                </button>
+              )}
+            </div>
           </form>
         </section>
       </div>
@@ -293,11 +338,19 @@ export default function Home() {
                   <strong>{t.category}</strong> <small>({t.type})</small> — <span style={{ color: '#555' }}>{t.date}</span><br />
                   <small style={{ color: '#777' }}>{t.description || 'Tanpa deskripsi'}</small>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                  <span style={{ fontWeight: 'bold', color: t.type === 'Income' ? 'green' : t.type === 'Savings' ? 'blue' : 'red' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontWeight: 'bold', color: t.type === 'Income' ? 'green' : t.type === 'Savings' ? 'blue' : 'red', marginRight: '1rem' }}>
                     {t.type === 'Income' ? '+' : '-'} Rp {Number(t.amount).toLocaleString('id-ID')}
                   </span>
-                  <button onClick={() => handleDelete(t.id)} style={{ background: '#ff4d4f', color: 'white', border: 'none', padding: '0.3rem 0.6rem', borderRadius: '4px', cursor: 'pointer' }}>Hapus</button>
+                  
+                  {/* Tombol Edit Baru */}
+                  <button onClick={() => handleEditClick(t)} style={{ background: '#f6ad55', color: 'white', border: 'none', padding: '0.3rem 0.6rem', borderRadius: '4px', cursor: 'pointer' }}>
+                    Edit
+                  </button>
+
+                  <button onClick={() => handleDelete(t.id)} style={{ background: '#ff4d4f', color: 'white', border: 'none', padding: '0.3rem 0.6rem', borderRadius: '4px', cursor: 'pointer' }}>
+                    Hapus
+                  </button>
                 </div>
               </li>
             ))}
